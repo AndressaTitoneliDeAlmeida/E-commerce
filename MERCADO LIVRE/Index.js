@@ -21,11 +21,10 @@ function generateCodeChallenge(codeVerifier) {
 }
 
 app.post('/teste', async (req, res) => {
-    const app_id = "468580951981165";
-    const client_secret = "V4gUwGuWU1ocW4PGvCRl6veOYgUGSlUn";
-    const code = "TG-67eaf4d2892f900001db1220-64910273";
-    const redirect_uri = "https://www.kyotoconcertina.com/";
-
+    const app_id = "7375313929424067";
+    const client_secret = "4PSGxXtdPiRfvg0IxDtW4NtK9r3N0md8";
+    const code = "TG-67ebea2e96ac3800016e952b-64910273";
+    const redirect_uri = "https://github.com/AndressaTitoneliDeAlmeida/E-commerce";
     const url_principal = "https://api.mercadolibre.com/oauth/token";
 
     try {
@@ -71,7 +70,60 @@ app.post('/teste', async (req, res) => {
     }
 });
 
-const PORT = process.env.PORT || 4040;
+app.post('/getAccessToken', async (req, res) => {
+    let refresh_token = "TG-67ebe155a84fe1000182debb-64910273"; // Pode vir do banco ou de um arquivo
+
+    const app_id = "7375313929424067";
+    const client_secret = "4PSGxXtdPiRfvg0IxDtW4NtK9r3N0md8";
+    const url_principal = "https://api.mercadolibre.com/oauth/token";
+
+    try {
+        const headers = {
+            "accept": "application/json",
+            "content-type": "application/x-www-form-urlencoded"
+        };
+
+        // Formata os dados corretamente
+        const dados = new URLSearchParams({
+            grant_type: "refresh_token",
+            client_id: app_id,
+            client_secret: client_secret,
+            refresh_token: refresh_token
+        });
+
+        const resposta = await fetch(url_principal, {
+            method: 'POST',
+            headers,
+            body: dados
+        });
+
+        const dadosResposta = await resposta.json();
+        console.log('Resposta do Mercado Livre:', dadosResposta);
+
+        // Verifica se a resposta contém um novo refresh_token e o atualiza
+        if (dadosResposta.refresh_token) {
+            refresh_token = dadosResposta.refresh_token;
+            console.log("Novo refresh token armazenado:", refresh_token);
+        } else {
+            console.warn("Nenhum novo refresh token retornado.");
+        }
+
+        res.status(200).json({
+            status: 'OK',
+            mercadoLivreResponse: dadosResposta
+        });
+
+    } catch (erro) {
+        console.error('Erro ao obter o token de acesso:', erro);
+        res.status(500).json({
+            status: 'ERROR',
+            message: erro.message
+        });
+    }
+});
+
+
+const PORT = process.env.PORT || 4041;
 app.listen(PORT, () => {
     console.log(`Servidor ativo na porta ${PORT} - http://localhost:${PORT}`);
 });
