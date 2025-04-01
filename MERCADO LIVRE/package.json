@@ -9,12 +9,12 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "",
   "devDependencies": {
     "nodemon": "^3.1.9"
   },
   "dependencies": {
     "express": "^5.1.0",
     "node-fetch": "^2.7.0"
-  }
+  },
+  "description": ""
 }
