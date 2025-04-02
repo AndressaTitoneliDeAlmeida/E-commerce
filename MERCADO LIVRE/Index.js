@@ -23,7 +23,7 @@ function generateCodeChallenge(codeVerifier) {
 app.post('/teste', async (req, res) => {
     const app_id = "7375313929424067";
     const client_secret = "4PSGxXtdPiRfvg0IxDtW4NtK9r3N0md8";
-    const code = "TG-67ebea2e96ac3800016e952b-64910273";
+    const code = "TG-67ed29240e849300013e62dc-64910273";
     const redirect_uri = "https://github.com/AndressaTitoneliDeAlmeida/E-commerce";
     const url_principal = "https://api.mercadolibre.com/oauth/token";
 

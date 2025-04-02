@@ -1,136 +1,135 @@
 const express = require('express');
+const fs = require('fs');
+const path = require('path');
 const fetch = require('node-fetch');
 
 const app = express();
 app.use(express.json());
 
-// CONFIGURAÇÕES
-const MERCADO_LIVRE_ACCESS_TOKEN = "APP_USR-7375313929424067-040109-fc0eca92e3b3eb42be99127329c6765f-64910273";
-const GEMINI_API_KEY = "SUA_CHAVE_API_AQUI"; // Substitua pela sua API Key
-const USER_ID = "64910273"; // ID do vendedor no Mercado Livre
+const MERCADO_LIVRE_ACCESS_TOKEN = "APP_USR-7375313929424067-040208-647bc9d9660882a4520a4295d6b16613-64910273";
+const USER_ID = "64910273";
+const INTERVALO_VERIFICACAO = 30 * 1000; // 30 segundos
+const DB_PATH = path.join(__dirname, 'respostas.json'); // Caminho do banco de dados JSON
 
-// 1️⃣ Capturar perguntas pendentes nos anúncios
-app.get('/capturarPerguntas', async (req, res) => {
-    const url_perguntas = `https://api.mercadolibre.com/questions/search?seller_id=${USER_ID}&status=UNANSWERED`;
+// Verifica se o arquivo do banco de dados existe, senão cria um novo
+if (!fs.existsSync(DB_PATH)) {
+    fs.writeFileSync(DB_PATH, JSON.stringify({}, null, 2), 'utf8');
+}
 
+// Função para carregar o banco de respostas
+function carregarBanco() {
+    return JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
+}
+
+// Busca resposta no banco de dados local
+function buscarResposta(pergunta) {
+    const banco = carregarBanco();
+
+    for (const chave in banco) {
+        if (pergunta.toLowerCase().includes(chave.toLowerCase())) {
+            return banco[chave]; // Retorna a resposta salva
+        }
+    }
+    return null; // Se não encontrar, retorna null
+}
+
+// Salva novas perguntas e respostas no banco de dados
+function salvarResposta(pergunta, resposta) {
+    const banco = carregarBanco();
+    banco[pergunta] = resposta;
+    fs.writeFileSync(DB_PATH, JSON.stringify(banco, null, 2), 'utf8');
+    console.log(`📁 Resposta salva no banco: "${pergunta}" -> "${resposta}"`);
+}
+
+// Função principal para verificar perguntas
+async function verificarPerguntas() {
+    console.log('🔍 Verificando perguntas...');
     try {
-        const headers = {
-            "Authorization": `Bearer ${MERCADO_LIVRE_ACCESS_TOKEN}`,
-            "Content-Type": "application/json"
-        };
-
-        const resposta = await fetch(url_perguntas, { method: 'GET', headers });
-        const dados = await resposta.json();
-
-        if (!dados.questions || dados.questions.length === 0) {
-            return res.status(200).json({ status: 'OK', message: 'Nenhuma pergunta pendente.' });
+        const perguntas = await buscarPerguntasNaoRespondidas();
+        if (perguntas.length === 0) {
+            console.log('✅ Nenhuma pergunta pendente.');
+            return;
         }
 
-        console.log('Perguntas pendentes:', dados.questions);
+        for (const pergunta of perguntas) {
+            console.log(`💬 Pergunta recebida: "${pergunta.text}"`);
 
-        // Responder automaticamente as perguntas capturadas
-        for (let pergunta of dados.questions) {
-            const question_id = pergunta.id;
-            const perguntaTexto = pergunta.text;
-            const produto_id = pergunta.item_id;
-
-            // 🔍 Buscar a descrição do produto
-            const descricaoProduto = await buscarDescricaoProduto(produto_id);
-
-            // Gerar resposta com o Gemini
-            const respostaGerada = await gerarRespostaGemini(perguntaTexto, descricaoProduto);
-
-            if (respostaGerada) {
-                // Enviar a resposta para o Mercado Livre
-                await responderPerguntaMercadoLivre(question_id, respostaGerada);
+            // Verifica se já temos essa resposta no banco de dados
+            const resposta = buscarResposta(pergunta.text);
+            if (resposta) {
+                console.log(`✅ Resposta encontrada no banco: "${resposta}"`);
+                await enviarRespostaMercadoLivre(pergunta.id, resposta);
+            } else {
+                console.log(`⚠️ Pergunta não encontrada no banco. Precisa de resposta manual.`);
             }
         }
-
-        res.status(200).json({ status: 'OK', message: 'Perguntas respondidas automaticamente.' });
-
     } catch (erro) {
-        console.error('Erro ao capturar perguntas:', erro);
-        res.status(500).json({ status: 'ERROR', message: erro.message });
+        console.error('❌ Erro durante a verificação:', erro);
     }
-});
+}
 
-// 2️⃣ Buscar a descrição do produto no Mercado Livre
-async function buscarDescricaoProduto(produto_id) {
-    const url = `https://api.mercadolibre.com/items/${produto_id}`;
+// Busca perguntas não respondidas no Mercado Livre
+async function buscarPerguntasNaoRespondidas() {
+    const url = `https://api.mercadolibre.com/questions/search?seller_id=${USER_ID}&status=UNANSWERED`;
 
     try {
         const resposta = await fetch(url, {
-            method: 'GET',
             headers: { "Authorization": `Bearer ${MERCADO_LIVRE_ACCESS_TOKEN}` }
         });
 
         const dados = await resposta.json();
-        return dados.title + " - " + (dados.description?.plain_text || "Descrição não disponível.");
+        return dados.questions || [];
     } catch (erro) {
-        console.error('Erro ao buscar descrição do produto:', erro);
-        return "Descrição não disponível.";
+        console.error("❌ Erro ao buscar perguntas no Mercado Livre:", erro);
+        return [];
     }
 }
 
-// 3️⃣ Enviar pergunta ao Google Gemini e gerar resposta
-async function gerarRespostaGemini(pergunta, descricaoProduto) {
-    const prompt = `O cliente fez a seguinte pergunta sobre o produto: "${descricaoProduto}". Pergunta: "${pergunta}". Responda de forma educada e objetiva com base na descrição do produto.`;
+// Envia a resposta para o Mercado Livre
+async function enviarRespostaMercadoLivre(perguntaId, resposta) {
+    const url = `https://api.mercadolibre.com/answers`;
 
-    try {
-        const resposta = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
-            method: 'POST',
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                contents: [{ role: "user", parts: [{ text: prompt }] }]
-            })
-        });
-
-        const dados = await resposta.json();
-        
-        console.log('Resposta do Gemini:', JSON.stringify(dados, null, 2));
-
-        if (dados && dados.candidates && dados.candidates.length > 0) {
-            return dados.candidates[0]?.content?.parts[0]?.text || "Desculpe, não consegui gerar uma resposta.";
-        } else {
-            console.error('Resposta inesperada do Gemini:', dados);
-            return "Desculpe, não consegui gerar uma resposta. Tente novamente mais tarde.";
-        }
-
-    } catch (erro) {
-        console.error('Erro ao gerar resposta com Gemini:', erro);
-        return "Erro ao processar a resposta. Tente novamente mais tarde.";
-    }
-}
-
-// 4️⃣ Responder automaticamente no Mercado Livre
-async function responderPerguntaMercadoLivre(question_id, respostaGerada) {
-    const url_resposta = `https://api.mercadolibre.com/answers`;
-    const body = JSON.stringify({
-        question_id: question_id,
-        text: respostaGerada
-    });
-
-    const headers = {
-        "Authorization": `Bearer ${MERCADO_LIVRE_ACCESS_TOKEN}`,
-        "Content-Type": "application/json"
+    const body = {
+        question_id: perguntaId,
+        text: resposta
     };
 
     try {
-        const resposta = await fetch(url_resposta, { method: 'POST', headers, body });
-        const resultado = await resposta.json();
+        const respostaML = await fetch(url, {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${MERCADO_LIVRE_ACCESS_TOKEN}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify(body)
+        });
 
-        if (resposta.ok) {
-            console.log(`Pergunta respondida automaticamente. ID: ${question_id} -> Resposta: ${respostaGerada}`);
+        if (respostaML.ok) {
+            console.log(`✅ Resposta enviada para a pergunta ID ${perguntaId}`);
         } else {
-            console.error('Erro ao enviar resposta:', resultado);
+            console.log(`⚠️ Falha ao enviar resposta para a pergunta ID ${perguntaId}`);
         }
     } catch (erro) {
-        console.error('Erro ao responder pergunta:', erro);
+        console.error("❌ Erro ao enviar resposta para o Mercado Livre:", erro);
     }
 }
 
-// Inicia o servidor
-const PORT = process.env.PORT || 4041;
-app.listen(PORT, () => {
-    console.log(`Servidor rodando na porta ${PORT}`);
+// Endpoint para adicionar respostas manualmente
+app.post('/add-resposta', (req, res) => {
+    const { pergunta, resposta } = req.body;
+    if (!pergunta || !resposta) {
+        return res.status(400).json({ erro: "Pergunta e resposta são obrigatórias." });
+    }
+
+    salvarResposta(pergunta, resposta);
+    res.json({ mensagem: "Resposta adicionada com sucesso!" });
 });
+
+// Inicia a verificação automática a cada 30 segundos
+setInterval(verificarPerguntas, INTERVALO_VERIFICACAO);
+
+// Inicia o servidor Express
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`🚀 Servidor rodando na porta ${PORT}`);
+}); 
